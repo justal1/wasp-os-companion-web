@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wasp Companion</title>
+<meta name="description" content="Browser companion for wasp-os watches (Colmi P8, PineTime): time sync, steps, notifications, apps, files, console. Uses Web Bluetooth.">
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --ink:#1b1f24; --mute:#667085; --line:#e3e6eb;
+  --acc:#e8590c; --acc2:#2b8a3e; --bad:#c92a2a; --bar:#e8590c; --bar2:#f4b183; --code:#f1f3f5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#111418; --card:#1a1e24; --ink:#e8eaed; --mute:#98a2b3; --line:#2a3039;
+    --acc:#ff8a4c; --acc2:#51cf66; --bad:#ff6b6b; --bar:#ff8a4c; --bar2:#7a4a2e; --code:#0e1115;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111418; --card:#1a1e24; --ink:#e8eaed; --mute:#98a2b3; --line:#2a3039;
+  --acc:#ff8a4c; --acc2:#51cf66; --bad:#ff6b6b; --bar:#ff8a4c; --bar2:#7a4a2e; --code:#0e1115;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-bottom:60px}
+header{display:flex;align-items:center;gap:12px;padding:12px 16px;position:sticky;top:0;background:var(--bg);z-index:5;border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:18px;margin:0;font-weight:650;letter-spacing:.2px}
+h1 span{color:var(--acc)}
+.pill{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);color:var(--mute);background:var(--card)}
+.pill.on{color:var(--acc2);border-color:var(--acc2)}
+.pill.busy{color:var(--acc);border-color:var(--acc)}
+.sp{flex:1}
+nav{display:flex;gap:4px;padding:8px 12px;overflow-x:auto;background:var(--bg);position:sticky;top:57px;z-index:4;border-bottom:1px solid var(--line)}
+nav button{white-space:nowrap}
+main{max-width:860px;margin:0 auto;padding:16px}
+section{display:none}
+section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.8px;color:var(--mute);font-weight:600}
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:7px 13px;border-radius:8px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button.tab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.sm{padding:3px 9px;font-size:13px}
+button.bad{color:var(--bad)}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px;max-width:100%}
+textarea{width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+label{display:block;font-size:13px;color:var(--mute);margin:8px 0 3px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stat{background:var(--bg);border-radius:10px;padding:10px 12px}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stat small{color:var(--mute)}
+pre,.log{background:var(--code);border-radius:8px;padding:10px;font:12.5px/1.4 ui-monospace,Menlo,Consolas,monospace;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all;margin:8px 0 0}
+canvas{width:100%;display:block}
+table{width:100%;border-collapse:collapse}
+td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+td.r,th.r{text-align:right}
+a{color:var(--acc)}
+.note{color:var(--mute);font-size:13px}
+.warn{border-color:var(--bad);color:var(--bad)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--acc);width:0}
+#toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:99px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:20;max-width:90vw}
+#toast.on{opacity:1}
+.gap{height:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Wasp <span>Companion</span></h1>
+  <span class="pill" id="st">Not connected</span>
+  <span class="pill" id="bat" hidden></span>
+  <span class="sp"></span>
+  <button id="bConnect" class="pri">Connect watch</button>
+  <button id="bDemo" class="sm" title="Simulated watch, for trying the app without hardware">Demo</button>
+  <button id="bDisc" class="sm" hidden>Disconnect</button>
+</header>
+<nav id="nav"></nav>
+<main>
+
+<div id="nosupport" class="card warn" hidden>
+  <b>Web Bluetooth isn't available in this browser.</b>
+  Use Chrome or Edge on desktop or Android (over https or localhost). iPhone/iPad need an app such as Bluefy. You can still try the Demo watch.
+</div>
+
+<!-- DASHBOARD -->
+<section id="s-dash" class="on">
+  <div class="card">
+    <h2>Watch</h2>
+    <div class="grid" id="dashStats">
+      <div class="stat"><small>Battery</small><b id="dBat">–</b><small id="dBatV"></small></div>
+      <div class="stat"><small>Watch time</small><b id="dTime">–</b><small id="dDrift"></small></div>
+      <div class="stat"><small>Steps today</small><b id="dSteps">–</b></div>
+      <div class="stat"><small>Free RAM</small><b id="dMem">–</b></div>
+      <div class="stat"><small>Free flash</small><b id="dFlash">–</b></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="bRefresh">Refresh</button>
+      <button id="bSync" class="pri">Sync time</button>
+      <button id="bFind">Buzz watch</button>
+      <button id="bReboot" class="bad">Reboot</button>
+    </div>
+    <p class="note" id="dVer"></p>
+  </div>
+  <div class="card">
+    <h2>Connection</h2>
+    <p class="note">The page pauses the watch (Ctrl-C) while it works and restarts it a few seconds later. The watch screen may freeze briefly during an operation. That is normal.</p>
+    <div class="row">
+      <label style="margin:0"><input type="checkbox" id="optHold"> Keep watch paused (don't auto-resume)</label>
+      <button id="bResume" class="sm">Resume watch now</button>
+    </div>
+    <label>Write chunk size (bytes) and delay (ms) for write-without-response</label>
+    <div class="row"><input id="optChunk" type="number" value="20" min="1" max="244" style="width:90px"><input id="optDelay" type="number" value="12" min="0" max="200" style="width:90px"></div>
+    <div class="log" id="oplog" style="margin-top:12px"></div>
+  </div>
+</section>
+
+<!-- STEPS -->
+<section id="s-steps">
+  <div class="card">
+    <div class="row">
+      <button id="bStepSync" class="pri">Sync steps from watch</button>
+      <button id="bStepCsv">Export CSV</button>
+      <button id="bStepClear" class="bad sm">Clear cache</button>
+      <span class="sp"></span>
+      <label style="margin:0">Goal <input id="goal" type="number" value="10000" style="width:90px"></label>
+    </div>
+    <div class="bar" id="stepProg" hidden><i></i></div>
+    <p class="note" id="stepNote">The watch logs steps every 6 minutes to <code>logs/YYYY/MM-DD.steps</code> and writes to flash every 3 hours, so the newest data can be a few hours behind unless the step logger can be read live.</p>
+  </div>
+  <div class="card">
+    <div class="row">
+      <button class="tab on" data-v="day">Day</button>
+      <button class="tab" data-v="week">Week</button>
+      <button class="tab" data-v="month">Month</button>
+      <button class="tab" data-v="all">All</button>
+      <span class="sp"></span>
+      <button id="dPrev" class="sm">‹</button>
+      <input type="date" id="dPick">
+      <button id="dNext" class="sm">›</button>
+    </div>
+    <div class="row" style="margin:8px 0"><label style="margin:0"><input type="checkbox" id="fine"> 6-minute bars (day view)</label></div>
+    <canvas id="chart" height="260"></canvas>
+    <div class="grid" style="margin-top:12px" id="stepStats"></div>
+  </div>
+</section>
+
+<!-- SEND -->
+<section id="s-send">
+  <div class="card">
+    <h2>Notification</h2>
+    <label>Title</label><input id="nTitle" value="Hello" style="width:100%">
+    <label>Body</label><textarea id="nBody" rows="3">Sent from the web companion.</textarea>
+    <div class="row" style="margin-top:8px">
+      <label style="margin:0">ID <input id="nId" type="number" value="1" style="width:70px"></label>
+      <button id="bNotify" class="pri">Send</button>
+      <button id="bUnnotify">Clear that ID</button>
+      <button id="bClearAll">Clear all</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Weather (Open-Meteo)</h2>
+    <div class="row"><input id="wCity" placeholder="City" style="flex:1;min-width:160px"><button id="bWeather" class="pri">Fetch &amp; send</button></div>
+    <label style="margin-top:10px"><input type="checkbox" id="wAuto"> Re-send every 30 minutes while this page is open and connected</label>
+    <pre id="wOut" hidden></pre>
+    <p class="note">Open the Weather app on the watch to see it. Temperatures are sent in Kelvin, as the Gadgetbridge protocol expects.</p>
+  </div>
+  <div class="card">
+    <h2>Music display</h2>
+    <div class="row"><input id="mArtist" placeholder="Artist"><input id="mTrack" placeholder="Track"><button id="bMusic">Show on watch</button></div>
+    <p class="note">Sets what the watch's Music app shows. A web page can't read what your phone is playing, so this is manual.</p>
+  </div>
+</section>
+
+<!-- APPS -->
+<section id="s-apps">
+  <div class="card">
+    <h2>Watch faces</h2>
+    <div class="row"><button id="bFaces">Load faces</button><label style="margin:0"><input type="checkbox" id="faceBoot"> also make it the boot default</label></div>
+    <div id="faceList" class="row" style="margin-top:10px"></div>
+  </div>
+  <div class="card">
+    <h2>Installed apps</h2>
+    <button id="bApps">Load apps</button>
+    <table id="appTable" style="margin-top:8px"></table>
+  </div>
+  <div class="card">
+    <h2>Install an app or watch face</h2>
+    <div class="row"><input type="file" id="appFile" accept=".py"><button id="bSample">Load sample app</button></div>
+    <label>Module name on the watch (file will be <code>name.py</code>)</label><input id="appName" placeholder="myapp">
+    <label>Source</label><textarea id="appSrc" rows="10" spellcheck="false" placeholder="# paste or load MicroPython source here"></textarea>
+    <label>Register class (module.ClassName) after install</label><input id="appClass" placeholder="myapp.MyApp" style="width:100%">
+    <div class="row" style="margin:8px 0">
+      <label style="margin:0"><input type="checkbox" id="appFace"> it is a watch face</label>
+      <label style="margin:0"><input type="checkbox" id="appBoot" checked> register at boot (edits <code>main.py</code>)</label>
+    </div>
+    <button id="bInstall" class="pri">Install</button>
+    <div class="bar" id="upProg" hidden><i></i></div>
+    <p class="note">Installing writes to the watch's flash. Check the code first: a broken app is recoverable (hold the button at boot to enter safe mode), but it costs time.</p>
+  </div>
+</section>
+
+<!-- FILES -->
+<section id="s-files">
+  <div class="card">
+    <div class="row"><input id="fPath" value="/flash" style="flex:1;min-width:160px"><button id="bLs" class="pri">List</button><button id="bUp" class="sm">↑ Up</button></div>
+    <table id="fTable" style="margin-top:8px"></table>
+    <div class="row" style="margin-top:10px"><input type="file" id="fUpload"><button id="bFUp">Upload here</button><button id="bMkdir" class="sm">New folder</button></div>
+    <div class="bar" id="fProg" hidden><i></i></div>
+  </div>
+  <div class="card" id="viewer" hidden>
+    <h2 id="vName">File</h2>
+    <pre id="vText"></pre>
+  </div>
+</section>
+
+<!-- CONSOLE -->
+<section id="s-console">
+  <div class="card">
+    <h2>MicroPython REPL</h2>
+    <div class="log" id="term" style="min-height:240px;max-height:420px"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="cmd" placeholder="e.g. watch.battery.level()" style="flex:1;min-width:200px" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button id="bSend" class="pri">Send</button>
+      <button id="bCtrlC" class="sm">Ctrl-C</button>
+      <button id="bClear" class="sm">Clear</button>
+    </div>
+    <p class="note">Raw REPL: whatever you type goes straight to the watch. The watch stays paused while you are on this tab.</p>
+  </div>
+</section>
+
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const NUS='6e400001-b5a0-f393-e0a9-e50e24dcca9e', RXC='6e400002-b5a0-f393-e0a9-e50e24dcca9e', TXC='6e400003-b5a0-f393-e0a9-e50e24dcca9e';
+const $=id=>document.getElementById(id);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const pad=(n,w=2)=>String(n).padStart(w,'0');
+function toast(m,ms=2500){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('on'),ms)}
+function log(m){const l=$('oplog');l.textContent=(new Date().toLocaleTimeString()+'  '+m+'\n')+l.textContent.slice(0,4000)}
+function lsGet(k,d){try{const v=localStorage.getItem(k);return v===null?d:v}catch(e){return d}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+
+/* ---------- Python string literal (single quoted) ---------- */
+function pyStr(s){
+  let o="'";
+  for(const c of s){
+    const n=c.codePointAt(0);
+    if(c==='\\')o+='\\\\'; else if(c==="'")o+="\\'"; else if(c==='\n')o+='\\n'; else if(c==='\r')o+='\\r'; else if(c==='\t')o+='\\t';
+    else if(n<32||n===127)o+='\\x'+pad(n.toString(16));
+    else if(n>255)o+='?';
+    else if(n>126)o+='\\x'+n.toString(16);
+    else o+=c;
+  }
+  return o+"'";
+}
+const b64enc=u8=>{let s='';for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(s)};
+const b64dec=s=>{const b=atob(s.replace(/\s+/g,''));const u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u};
+
+/* ---------- BLE link + REPL layer ---------- */
+class Link{
+  constructor(){this.dev=null;this.rx=null;this.tx=null;this.buf='';this.waiters=[];this.synced=false;this.chain=Promise.resolve();this.resumeTimer=null;this.hold=false;this.onraw=null;this.ondisc=null;this.dec=new TextDecoder();this.connected=false}
+  async connect(bt,all=true){
+    const opts=all?{acceptAllDevices:true,optionalServices:[NUS]}:{filters:[{services:[NUS]}]};
+    this.dev=await bt.requestDevice(opts);
+    this.dev.addEventListener('gattserverdisconnected',()=>{this.connected=false;this.synced=false;this.ondisc&&this.ondisc()});
+    const srv=await this.dev.gatt.connect();
+    const svc=await srv.getPrimaryService(NUS);
+    this.rx=await svc.getCharacteristic(RXC);
+    this.tx=await svc.getCharacteristic(TXC);
+    this.tx.addEventListener('characteristicvaluechanged',e=>this._data(e.target.value));
+    await this.tx.startNotifications();
+    this.connected=true;this.synced=false;this.buf='';
+    return this.dev.name||'(unnamed)';
+  }
+  disconnect(){try{this.dev&&this.dev.gatt.connected&&this.dev.gatt.disconnect()}catch(e){}}
+  _data(dv){
+    const s=this.dec.decode(new Uint8Array(dv.buffer,dv.byteOffset,dv.byteLength),{stream:true});
+    this.buf+=s;
+    if(this.buf.length>200000)this.buf=this.buf.slice(-100000);
+    this.onraw&&this.onraw(s);
+    for(const w of this.waiters.slice())w.check();
+  }
+  waitFor(pred,timeout=15000,what='reply'){
+    return new Promise((res,rej)=>{
+      const w={check:()=>{const r=pred(this.buf);if(r){clear();res(r)}}};
+      const clear=()=>{clearTimeout(t);const i=this.waiters.indexOf(w);if(i>=0)this.waiters.splice(i,1)};
+      const t=setTimeout(()=>{clear();rej(new Error('Timed out waiting for '+what))},timeout);
+      this.waiters.push(w);
+      this.dev&&!this.connected&&(clear(),rej(new Error('Disconnected')));
+      w.check();
+    });
+  }
+  async write(str){
+    if(!this.connected)throw new Error('Not connected');
+    const bytes=new TextEncoder().encode(str);
+    const chunk=Math.max(1,Math.min(244,+$('optChunk').value||20));
+    const delay=Math.max(0,+$('optDelay').value||0);
+    const withResp=this.rx.properties.write;
+    for(let i=0;i<bytes.length;i+=chunk){
+      const part=bytes.slice(i,i+chunk);
+      if(withResp)await this.rx.writeValueWithResponse(part);
+      else{await this.rx.writeValueWithoutResponse(part);if(delay)await sleep(delay)}
+    }
+  }
+  lock(fn){const p=this.chain.then(fn,fn);this.chain=p.catch(()=>{});return p}
+  async sync(){
+    clearTimeout(this.resumeTimer);
+    if(this.synced)return;
+    this.buf='';
+    await this.write('\x03');
+    try{await this.waitFor(b=>/>>> $/.test(b),2500,'prompt')}
+    catch(e){await this.write('\x03');await this.waitFor(b=>/>>> $/.test(b),4000,'prompt')}
+    this.buf='';
+    await this.write("print('@@'+'S')\r");
+    await this.waitFor(b=>/@@S\r?\n>>> $/.test(b),4000,'sync');
+    this.synced=true;
+  }
+  async resume(){
+    clearTimeout(this.resumeTimer);
+    if(!this.connected||!this.synced)return;
+    this.buf='';
+    await this.write('wasp.system.run()\r');
+    try{await this.waitFor(b=>/Watch (is running|already running)/.test(b),5000,'resume')}catch(e){}
+    await this.write('\x18');
+    this.synced=false;
+  }
+  _arm(){
+    clearTimeout(this.resumeTimer);
+    if(this.hold||!this.connected)return;
+    this.resumeTimer=setTimeout(()=>{this.lock(()=>this.resume()).catch(()=>{})},5000);
+  }
+  /* Run Python source on the watch and return everything it printed. */
+  async _runInner(code,timeout=20000){
+    this.buf='';
+    await this.write("print('@@'+'B');exec("+pyStr(code)+");print('@@'+'E')\r");
+    const r=await this.waitFor(b=>{
+      const m=/@@B\r?\n([\s\S]*?)@@E\r?\n>>> $/.exec(b);if(m)return{ok:true,out:m[1]};
+      const e=/@@B\r?\n([\s\S]*?Traceback[\s\S]*?)>>> $/.exec(b);if(e)return{ok:false,out:e[1]};
+      return null},timeout,'watch');
+    if(!r.ok)throw new Error(r.out.replace(/\r/g,'').trim());
+    return r.out.replace(/\r\n/g,'\n').replace(/\n$/,'');
+  }
+  run(code,timeout=20000){
+    return this.lock(async()=>{
+      await this.sync();
+      try{return await this._runInner(code,timeout)}finally{this._arm()}
+    });
+  }
+  /* Send raw text (console). */
+  raw(str){return this.lock(async()=>{await this.sync();await this.write(str);clearTimeout(this.resumeTimer);if(!this.hold)this.resumeTimer=setTimeout(()=>{this.lock(()=>this.resume()).catch(()=>{})},30000)})}
+  rawNoSync(str){return this.lock(()=>this.write(str))}
+}
+const link=new Link();
+
+/* ---------- simulated watch (also used for self-test) ---------- */
+function makeDemo(){
+  const files={'/flash/main.py':'import wasp\nfrom gadgetbridge import *\nwasp.system.schedule()\n','/flash/alarms.txt':'7,30,1;'};
+  const dirs=new Set(['/flash','/flash/logs']);
+  let t0=Date.now(),drift=3000,steps=4321;
+  const today=new Date();
+  const dayKey=d=>d.getFullYear()+'/'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+  for(let i=1;i<=20;i++){
+    const d=new Date(today);d.setDate(d.getDate()-i);
+    dirs.add('/flash/logs/'+d.getFullYear());
+    const a=new Uint16Array(240);
+    for(let s=0;s<240;s++){const h=s/10;let v=0;
+      if((h>7&&h<9)||(h>12&&h<13.5)||(h>17&&h<19))v=Math.max(0,Math.round(((i*37+s*53)%100)*.9)+20);
+      else if(h>9&&h<17)v=Math.round(((i*11+s*7)%25));
+      a[s]=v}
+    files['/flash/logs/'+dayKey(d)+'.steps']=new Uint8Array(a.buffer);
+  }
+  let notifications={},running=true,upload=null;
+  const dev=(code)=>{
+    let m;
+    if(/battery\.level/.test(code))return JSON.stringify({bat:77,mv:3921,chg:0,mem:41280,flash:[4096,512,380],ver:'MicroPython v1.2x (demo) on Colmi P8',units:'Metric',steps:steps,time:(()=>{const n=new Date(Date.now()-drift);return [n.getFullYear(),n.getMonth()+1,n.getDate(),n.getHours(),n.getMinutes(),n.getSeconds(),(n.getDay()+6)%7,0]})()});
+    if(/set_localtime/.test(code)){m=/set_localtime\(\((\d+), (\d+), (\d+), (\d+), (\d+), (\d+)/.exec(code);if(m)drift=Date.now()-new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime();return ''}
+    if(/steps\.data/.test(code)){const a=new Array(240).fill(0);for(let s=0;s<84;s++)a[s]=s>=70?(s*3)%30:(s%9===0?15:2);steps=a.reduce((x,y)=>x+y,0)+3000;return JSON.stringify(a)}
+    if(/listdir\('logs'\)/.test(code)){const r={};for(const f of Object.keys(files)){m=/^\/flash\/logs\/(\d+)\/(.+\.steps)$/.exec(f);if(m)(r[m[1]]=r[m[1]]||[]).push(m[2])}return JSON.stringify(r)}
+    if(m=/open\('([^']+)','rb'\)/.exec(code)){const f=files[m[1].startsWith('/')?m[1]:'/flash/'+m[1]];if(!f)throw new Error("OSError: [Errno 2] ENOENT");const u=typeof f==='string'?new TextEncoder().encode(f):f;return b64enc(u).replace(/(.{128})/g,'$1\n')}
+    if(/appregistry/.test(code))return JSON.stringify({faces:[['clock','Clock'],['chrono','Chrono'],['word_clock','WordClock'],['fibonacci_clock','FibonacciClock'],['dual_clock','DualClock'],['week_clock','WeekClock'],['resistor_clock','ResistorClock']],cur:'ClockApp',apps:[['Alarm',1],['Calculator',1],['Heart',1],['Music',1],['Settings',0],['Snake',1],['Steps',0],['Stopwatch',1],['Timer',1],['Weather',1]]});
+    if(/\.register\(/.test(code))return 'ok';
+    if(/notify/.test(code))return '';
+    if(/vibrator/.test(code))return '';
+    if(/set_weather_info|set_music_info/.test(code))return '';
+    if(/os\.rename|os\.remove|os\.mkdir|os\.rmdir/.test(code)){if(m=/os\.remove\('([^']+)'\)/.exec(code))delete files[m[1]];return ''}
+    if(/'wb'/.test(code)){m=/open\('([^']+)','wb'\)/.exec(code);upload={n:m[1],parts:[]};return ''}
+    if(/\bw\('/.test(code)){const re=/w\('([^']*)'\)/g;let x;while(x=re.exec(code))upload.parts.push(b64dec(x[1]));return ''}
+    if(/f\.close\(\)/.test(code)&&upload){let n=0;for(const p of upload.parts)n+=p.length;const u=new Uint8Array(n);let o=0;for(const p of upload.parts){u.set(p,o);o+=p.length}files[upload.n]=u;upload=null;return String(n)}
+    if(/os\.stat\('(\/[^']*)'\)\[6\]/.test(code)&&!/listdir/.test(code)){m=/os\.stat\('([^']*)'\)\[6\]/.exec(code);const f=files[m[1]];return String(f?(f.length||0):-1)}
+    if(m=/PATH=('(?:[^'\\]|\\.)*')/.exec(code)){const p=JSON.parse('"'+m[1].slice(1,-1).replace(/\\'/g,"'")+'"').replace(/\/$/,'')||'/';
+      const out=[];const seen=new Set();
+      for(const d of dirs)if(d.startsWith(p+'/')&&!d.slice(p.length+1).includes('/'))out.push([d.slice(p.length+1),true,0]);
+      for(const f of Object.keys(files))if(f.startsWith(p+'/')){const r=f.slice(p.length+1);if(r.includes('/')){const d=r.split('/')[0];if(!seen.has(d)&&!out.find(x=>x[0]===d)){out.push([d,true,0]);seen.add(d)}}else out.push([r,false,files[f].length])}
+      return JSON.stringify(out)}
+    return '';
+  };
+  const enc=new TextEncoder();
+  const listeners=[];let lineBuf='';
+  const tx={properties:{notify:true},addEventListener:(n,f)=>listeners.push(f),startNotifications:async()=>{}};
+  const emit=s=>{const b=enc.encode(s);let i=0;const go=()=>{if(i>=b.length)return;const part=b.slice(i,i+20);i+=20;const dv=new DataView(part.buffer);for(const f of listeners)f({target:{value:dv}});setTimeout(go,2)};setTimeout(go,3)};
+  const unpy=lit=>{let o='',s=lit.slice(1,-1);for(let i=0;i<s.length;i++){const c=s[i];if(c!=='\\'){o+=c;continue}const n=s[++i];if(n==='n')o+='\n';else if(n==='r')o+='\r';else if(n==='t')o+='\t';else if(n==='x'){o+=String.fromCharCode(parseInt(s.substr(i+1,2),16));i+=2}else o+=n}return o};
+  const handleLine=line=>{
+    let m=/^print\('@@'\+'B'\);exec\(('(?:[^'\\]|\\.)*')\);print\('@@'\+'E'\)$/.exec(line);
+    if(m){let out;try{out=dev(unpy(m[1]))}catch(e){emit('@@B\r\nTraceback (most recent call last):\r\n  File "<stdin>", line 1, in <module>\r\n'+e.message+'\r\n>>> ');return}
+      emit('@@B\r\n'+(out?out.replace(/\n/g,'\r\n')+'\r\n':'')+'@@E\r\n>>> ');return}
+    if(/^print\('@@'\+'S'\)$/.test(line)){emit('@@S\r\n>>> ');return}
+    if(/^wasp\.system\.run\(\)$/.test(line)){running=true;emit('Watch is running, use Ctrl-C to stop\r\n');return}
+    if(line.trim()==='')return emit('>>> ');
+    if(m=/^print\((.*)\)$/.exec(line)){try{emit(String(Function('"use strict";return ('+m[1]+')')())+'\r\n>>> ')}catch(e){emit('SyntaxError: invalid syntax\r\n>>> ')}return}
+    emit('Demo watch: only simple print() expressions work here.\r\n>>> ');
+  };
+  const rx={properties:{write:true,writeWithoutResponse:true},
+    writeValueWithResponse:async v=>{for(const b of new Uint8Array(v)){
+      if(b===3){running=false;lineBuf='';emit('\r\nTraceback (most recent call last):\r\nKeyboardInterrupt:\r\n>>> ')}
+      else if(b===0x18){}
+      else if(b===13){emit('\r\n');handleLine(lineBuf);lineBuf=''}
+      else{lineBuf+=String.fromCharCode(b);emit(String.fromCharCode(b))}}},
+    writeValueWithoutResponse:async v=>rx.writeValueWithResponse(v)};
+  const svc={getCharacteristic:async u=>u===RXC?rx:tx};
+  const gatt={connected:false,connect:async()=>{gatt.connected=true;return{getPrimaryService:async()=>svc}},disconnect(){gatt.connected=false;device._l.forEach(f=>f())}};
+  const device={name:'Demo P8',gatt,_l:[],addEventListener:(n,f)=>{if(n==='gattserverdisconnected')device._l.push(f)}};
+  const bt={requestDevice:async()=>device};
+  bt._files=files;bt._dev=dev;
+  return bt;
+}
+
+/* ---------- state / helpers ---------- */
+let demoBt=null;
+const ui={connected:false};
+function need(){if(!link.connected){toast('Connect a watch first');throw new Error('not connected')}}
+async function py(code,t){need();setBusy(true);try{return await link.run(code,t)}finally{setBusy(false)}}
+function setBusy(b){const s=$('st');if(!link.connected)return;s.className='pill '+(b?'busy':'on');s.textContent=(b?'Working… ':'Connected: ')+link.dev.name}
+async function act(name,fn){try{await fn();log(name+' ✓')}catch(e){if(e.message!=='not connected'){toast(name+' failed: '+e.message.split('\n').slice(-1)[0]);log(name+' ✗ '+e.message)}}}
+
+/* ---------- tabs ---------- */
+const TABS=[['dash','Watch'],['steps','Steps'],['send','Send'],['apps','Apps'],['files','Files'],['console','Console']];
+for(const [id,label] of TABS){
+  const b=document.createElement('button');b.className='tab'+(id==='dash'?' on':'');b.textContent=label;b.dataset.t=id;
+  b.onclick=()=>showTab(id);$('nav').appendChild(b);
+}
+function showTab(id){
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===id));
+  document.querySelectorAll('main > section').forEach(s=>s.classList.toggle('on',s.id==='s-'+id));
+  link.hold=(id==='console')||$('optHold').checked;
+  if(id==='steps')drawSteps();
+}
+
+/* ---------- connection ---------- */
+function onConnected(){
+  $('bConnect').hidden=true;$('bDemo').hidden=true;$('bDisc').hidden=false;
+  setBusy(false);log('Connected to '+link.dev.name);
+  act('Refresh',refresh);
+}
+link.ondisc=()=>{$('st').className='pill';$('st').textContent='Disconnected';$('bConnect').hidden=false;$('bDemo').hidden=false;$('bDisc').hidden=true;$('bat').hidden=true;log('Disconnected')};
+async function doConnect(bt){
+  try{await link.connect(bt,true);onConnected()}
+  catch(e){if(e.name!=='NotFoundError')toast('Connect failed: '+e.message);log('connect ✗ '+e.message)}
+}
+$('bConnect').onclick=()=>doConnect(navigator.bluetooth);
+$('bDemo').onclick=()=>{demoBt=demoBt||makeDemo();doConnect(demoBt)};
+$('bDisc').onclick=()=>link.disconnect();
+$('optHold').onchange=e=>{link.hold=e.target.checked};
+$('bResume').onclick=()=>act('Resume',()=>link.lock(()=>link.resume()));
+if(!navigator.bluetooth){$('nosupport').hidden=false;$('bConnect').disabled=true}
+
+/* ---------- dashboard ---------- */
+async function refresh(){
+  const o=JSON.parse(await py(
+`import gc,os,sys,json
+gc.collect()
+s=os.statvfs('/flash')
+print(json.dumps({'bat':watch.battery.level(),'mv':watch.battery.voltage_mv(),'chg':int(watch.battery.charging()),'mem':gc.mem_free(),'flash':[s[0],s[2],s[3]],'ver':sys.version,'units':wasp.system.units,'steps':watch.accel.steps,'time':watch.rtc.get_localtime()}))`));
+  $('dBat').textContent=o.bat+'%';$('dBatV').textContent=(o.mv/1000).toFixed(2)+' V'+(o.chg?' · charging':'');
+  $('bat').hidden=false;$('bat').textContent='🔋 '+o.bat+'%';
+  const t=o.time;$('dTime').textContent=pad(t[3])+':'+pad(t[4])+':'+pad(t[5]);
+  const wt=new Date(t[0],t[1]-1,t[2],t[3],t[4],t[5]).getTime();const dr=Math.round((wt-Date.now())/1000);
+  $('dDrift').textContent=(Math.abs(dr)<=2?'in sync':(dr>0?'ahead ':'behind ')+fmtDur(Math.abs(dr)))+' · '+t[0]+'-'+pad(t[1])+'-'+pad(t[2]);
+  $('dSteps').textContent=o.steps.toLocaleString();
+  $('dMem').textContent=(o.mem/1024).toFixed(1)+' kB';
+  $('dFlash').textContent=((o.flash[0]*o.flash[2])/1024).toFixed(0)+' kB';$('dVer').textContent=o.ver+' · units: '+o.units;
+}
+function fmtDur(s){return s<90?s+'s':s<5400?Math.round(s/60)+' min':s<172800?(s/3600).toFixed(1)+' h':Math.round(s/86400)+' days'}
+$('bRefresh').onclick=()=>act('Refresh',refresh);
+$('bSync').onclick=()=>act('Sync time',async()=>{
+  need();setBusy(true);
+  try{
+    await link.lock(async()=>{
+      await link.sync();
+      // Send ~250 ms before a second boundary so the command lands on it.
+      await sleep((1750-(Date.now()%1000))%1000);
+      const n=new Date(Math.ceil(Date.now()/1000)*1000);
+      const yd=Math.round((new Date(n.getFullYear(),n.getMonth(),n.getDate())-new Date(n.getFullYear(),0,1))/864e5)+1;
+      await link._runInner(`watch.rtc.set_localtime((${n.getFullYear()}, ${n.getMonth()+1}, ${n.getDate()}, ${n.getHours()}, ${n.getMinutes()}, ${n.getSeconds()}, ${(n.getDay()+6)%7}, ${yd}))`);
+      link._arm();
+    });
+  }finally{setBusy(false)}
+  await refresh();toast('Time set');
+});
+$('bFind').onclick=()=>act('Buzz',()=>py("for i in range(3):\n watch.vibrator.pulse(ms=250)\n import time;time.sleep_ms(250)"));
+$('bReboot').onclick=()=>{if(confirm('Reboot the watch? The Bluetooth link will drop.'))act('Reboot',async()=>{await py("import machine;machine.reset()",3000).catch(()=>{})})};
+
+/* ---------- steps ---------- */
+const DB={db:null,mem:{},async open(){if(this.db||this.failed)return;try{await new Promise((res,rej)=>{setTimeout(()=>rej(new Error('idb timeout')),3000);const r=indexedDB.open('waspweb',1);r.onupgradeneeded=()=>r.result.createObjectStore('steps');r.onsuccess=()=>{this.db=r.result;res()};r.onerror=()=>rej(r.error)})}catch(e){this.db=null;this.failed=true}},
+  async all(){await this.open();if(!this.db)return {...this.mem};return new Promise(res=>{const o={};setTimeout(()=>res(o),3000);const tx=this.db.transaction('steps').objectStore('steps').openCursor();tx.onsuccess=()=>{const c=tx.result;if(c){o[c.key]=c.value;c.continue()}else res(o)};tx.onerror=()=>res(o)})},
+  async put(k,v){await this.open();this.mem[k]=v;if(this.db)try{this.db.transaction('steps','readwrite').objectStore('steps').put(v,k)}catch(e){}},
+  async clear(){await this.open();this.mem={};if(this.db)try{this.db.transaction('steps','readwrite').objectStore('steps').clear()}catch(e){}}};
+let stepData={}; // 'YYYY-MM-DD' -> array(240)
+let view='day', cur=new Date();
+const dkey=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+function setProg(id,f){const b=$(id);b.hidden=f==null;if(f!=null)b.firstElementChild.style.width=Math.round(f*100)+'%'}
+function decodeSteps(u8){const a=new Array(240).fill(0);for(let i=0;i<240&&i*2+1<u8.length;i++)a[i]=u8[i*2]|(u8[i*2+1]<<8);return a}
+async function syncSteps(){
+  need();
+  stepData=await DB.all();
+  let listing={};
+  try{listing=JSON.parse(await py("import os,json\nr={}\ntry:\n for y in os.listdir('logs'):\n  r[y]=os.listdir('logs/'+y)\nexcept OSError:\n pass\nprint(json.dumps(r))"))}catch(e){throw e}
+  const todayK=dkey(new Date());const jobs=[];
+  for(const y in listing)for(const f of listing[y]){const m=/^(\d\d)-(\d\d)\.steps$/.exec(f);if(!m)continue;const k=y+'-'+m[1]+'-'+m[2];if(stepData[k]&&k<todayK)continue;jobs.push([k,'logs/'+y+'/'+f])}
+  jobs.sort();
+  let i=0;
+  for(const [k,p] of jobs){
+    setProg('stepProg',i++/(jobs.length+1));
+    const txt=await py("import ubinascii\nf=open("+pyStr(p)+",'rb')\nwhile 1:\n d=f.read(96)\n if not d:break\n print(ubinascii.b2a_base64(d).decode(),end='')\nf.close()");
+    stepData[k]=decodeSteps(b64dec(txt));await DB.put(k,stepData[k]);
+  }
+  // live data for today, including what has not been flushed to flash yet
+  try{
+    const live=JSON.parse(await py("import json,time\nd=wasp.system.steps.data(time.localtime())\nprint(json.dumps(list(d) if d else None))"));
+    if(live&&live.length){const a=new Array(240).fill(0);for(let j=0;j<240&&j<live.length;j++)a[j]=live[j]|0;stepData[todayK]=a;await DB.put(todayK,a)}
+  }catch(e){log('live steps unavailable: '+e.message.split('\n').slice(-1)[0])}
+  setProg('stepProg',null);
+  $('stepNote').textContent='Synced '+jobs.length+' file(s) at '+new Date().toLocaleTimeString()+'. '+Object.keys(stepData).length+' days cached in this browser.';
+  drawSteps();
+}
+$('bStepSync').onclick=()=>act('Step sync',syncSteps);
+$('bStepClear').onclick=async()=>{await DB.clear();stepData={};drawSteps();toast('Cache cleared')};
+$('bStepCsv').onclick=()=>{
+  const ks=Object.keys(stepData).sort();if(!ks.length)return toast('No data yet');
+  let c='date,time,steps\n';for(const k of ks)stepData[k].forEach((v,i)=>{c+=k+','+pad(Math.floor(i/10))+':'+pad((i%10)*6)+','+v+'\n'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/csv'}));a.download='steps.csv';a.click();
+};
+document.querySelectorAll('button.tab[data-v]').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('button.tab[data-v]').forEach(x=>x.classList.toggle('on',x===b));drawSteps()});
+$('dPrev').onclick=()=>{cur.setDate(cur.getDate()-(view==='week'?7:view==='month'?30:1));drawSteps()};
+$('dNext').onclick=()=>{cur.setDate(cur.getDate()+(view==='week'?7:view==='month'?30:1));drawSteps()};
+$('dPick').onchange=e=>{const v=e.target.valueAsDate;if(v){cur=new Date(v.getUTCFullYear(),v.getUTCMonth(),v.getUTCDate());drawSteps()}};
+$('fine').onchange=drawSteps;
+$('goal').value=lsGet('goal','10000');$('goal').onchange=()=>{lsSet('goal',$('goal').value);drawSteps()};
+const tot=a=>a.reduce((x,y)=>x+y,0);
+function chartBars(c,vals,labels,goal,fmtTip){
+  const dpr=window.devicePixelRatio||1,W=c.clientWidth,H=260;c.width=W*dpr;c.height=H*dpr;
+  const g=c.getContext('2d');g.scale(dpr,dpr);g.clearRect(0,0,W,H);
+  const cs=getComputedStyle(document.documentElement);const ink=cs.getPropertyValue('--mute').trim(),line=cs.getPropertyValue('--line').trim(),bar=cs.getPropertyValue('--bar').trim(),bar2=cs.getPropertyValue('--bar2').trim();
+  const L=44,R=8,T=10,B=24,pw=W-L-R,ph=H-T-B;
+  let max=Math.max(1,...vals,goal||0);const step=niceStep(max/4);max=Math.ceil(max/step)*step;
+  g.font='11px system-ui';g.fillStyle=ink;g.strokeStyle=line;g.textAlign='right';
+  for(let v=0;v<=max;v+=step){const y=T+ph-(v/max)*ph;g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.fillText(v>=1000?(v/1000)+'k':v,L-5,y+4)}
+  const n=vals.length,bw=pw/n;g.textAlign='center';
+  vals.forEach((v,i)=>{const h=(v/max)*ph;g.fillStyle=(goal&&v>=goal)?bar:(goal?bar2:bar);if(!goal)g.fillStyle=bar;g.fillRect(L+i*bw+bw*.12,T+ph-h,bw*.76,h);
+    if(labels[i]!==''&&(n<=14||i%Math.ceil(n/12)===0)){g.fillStyle=ink;g.fillText(labels[i],L+i*bw+bw/2,H-8)}});
+  if(goal){const y=T+ph-(goal/max)*ph;g.strokeStyle=cs.getPropertyValue('--acc2').trim();g.setLineDash([5,4]);g.beginPath();g.moveTo(L,y);g.lineTo(W-R,y);g.stroke();g.setLineDash([])}
+  c._geo={L,bw,n,fmtTip,vals,labels};
+}
+function niceStep(x){const p=Math.pow(10,Math.floor(Math.log10(x||1)));const f=x/p;return (f<=1?1:f<=2?2:f<=5?5:10)*p}
+$('chart').addEventListener('click',e=>{const c=e.target,gm=c._geo;if(!gm)return;const r=c.getBoundingClientRect();const i=Math.floor((e.clientX-r.left-gm.L)/gm.bw);if(i>=0&&i<gm.n)toast(gm.fmtTip(i),3500)});
+function daysBetween(a,b){const o=[];for(let d=new Date(a);d<=b;d.setDate(d.getDate()+1))o.push(new Date(d));return o}
+function drawSteps(){
+  if(!document.getElementById('s-steps').classList.contains('on'))return;
+  const goal=+$('goal').value||0;
+  $('dPick').value=dkey(cur);
+  const stats=[];let vals=[],labels=[],tip;
+  if(view==='day'){
+    const a=stepData[dkey(cur)];
+    if(!a){vals=new Array(24).fill(0);labels=vals.map((_,i)=>i%3===0?String(i):'');tip=i=>'No data';stats.push(['Steps','–'])}
+    else if($('fine').checked){vals=a;labels=a.map((_,i)=>i%10===0?String(i/10):'');tip=i=>pad(Math.floor(i/10))+':'+pad((i%10)*6)+' → '+a[i]+' steps'}
+    else{vals=[];for(let h=0;h<24;h++)vals.push(tot(a.slice(h*10,h*10+10)));labels=vals.map((_,i)=>i%3===0?String(i):'');tip=i=>pad(i)+':00 → '+vals[i]+' steps'}
+    if(a){const t=tot(a);stats.push(['Steps',t.toLocaleString()],['Goal',goal?Math.round(100*t/goal)+'%':'–']);
+      const hrs=[];for(let h=0;h<24;h++)hrs.push(tot(a.slice(h*10,h*10+10)));const pk=hrs.indexOf(Math.max(...hrs));
+      stats.push(['Busiest hour',hrs[pk]?pad(pk)+':00':'–'],['Active hours',hrs.filter(x=>x>=250).length+' h'],['Est. distance',(t*0.00075).toFixed(1)+' km'])}
+  }else{
+    let from,to=new Date(cur);
+    if(view==='week'){from=new Date(to);from.setDate(from.getDate()-6)}
+    else if(view==='month'){from=new Date(to);from.setDate(from.getDate()-29)}
+    else{const ks=Object.keys(stepData).sort();if(!ks.length){from=new Date(to);from.setDate(from.getDate()-6)}else{const f=ks[0].split('-');from=new Date(+f[0],+f[1]-1,+f[2]);const l=ks[ks.length-1].split('-');to=new Date(+l[0],+l[1]-1,+l[2])}}
+    const days=daysBetween(from,to);
+    vals=days.map(d=>stepData[dkey(d)]?tot(stepData[dkey(d)]):0);
+    labels=days.map(d=>view==='week'?d.toLocaleDateString(undefined,{weekday:'short'}):String(d.getDate()));
+    tip=i=>days[i].toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'})+' → '+vals[i].toLocaleString()+' steps';
+    const have=vals.filter((v,i)=>stepData[dkey(days[i])]);
+    stats.push(['Total',tot(vals).toLocaleString()],['Daily average',have.length?Math.round(tot(have)/have.length).toLocaleString():'–'],['Best day',have.length?Math.max(...have).toLocaleString():'–'],['Days on goal',goal?have.filter(v=>v>=goal).length+' / '+have.length:'–']);
+  }
+  chartBars($('chart'),vals,labels,view==='day'&&!$('fine').checked?0:goal,tip);
+  $('stepStats').innerHTML=stats.map(s=>`<div class="stat"><small>${s[0]}</small><b>${s[1]}</b></div>`).join('');
+}
+window.addEventListener('resize',drawSteps);
+DB.all().then(d=>{stepData=d;drawSteps()});
+
+/* ---------- send ---------- */
+$('bNotify').onclick=()=>act('Notify',()=>py(`import json\nwasp.system.notify(${+$('nId').value|0},json.loads(${pyStr(JSON.stringify({title:$('nTitle').value,body:$('nBody').value}))}))\nwatch.vibrator.pulse(ms=wasp.system.notify_duration)`).then(()=>toast('Sent')));
+$('bUnnotify').onclick=()=>act('Clear',()=>py(`wasp.system.unnotify(${+$('nId').value|0})`));
+$('bClearAll').onclick=()=>act('Clear all',()=>py('wasp.system.notifications.clear()'));
+const WMO={0:'Clear',1:'Mostly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Rime fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',56:'Freezing drizzle',57:'Freezing drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',66:'Freezing rain',67:'Freezing rain',71:'Light snow',73:'Snow',75:'Heavy snow',77:'Snow grains',80:'Showers',81:'Showers',82:'Heavy showers',85:'Snow showers',86:'Snow showers',95:'Thunderstorm',96:'Thunderstorm + hail',99:'Thunderstorm + hail'};
+$('wCity').value=lsGet('city','');
+let wTimer=null;
+async function sendWeather(){
+  const city=$('wCity').value.trim();if(!city)throw new Error('Enter a city');
+  lsSet('city',city);
+  const g=await (await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name='+encodeURIComponent(city))).json();
+  if(!g.results||!g.results.length)throw new Error('City not found');
+  const p=g.results[0];
+  const w=await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${p.latitude}&longitude=${p.longitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&wind_speed_unit=kmh`)).json();
+  const c=w.current;
+  const info={temp:Math.round((c.temperature_2m+273.15)*100)/100,hum:Math.round(c.relative_humidity_2m),txt:WMO[c.weather_code]||'Weather '+c.weather_code,wind:Math.round(c.wind_speed_10m),loc:p.name};
+  $('wOut').hidden=false;$('wOut').textContent=JSON.stringify(info,null,1);
+  await py(`import json\nwasp.system.set_weather_info(json.loads(${pyStr(JSON.stringify(info))}))`);
+  toast('Weather sent: '+info.txt+', '+Math.round(c.temperature_2m)+'°C');
+}
+$('bWeather').onclick=()=>act('Weather',sendWeather);
+$('wAuto').onchange=e=>{clearInterval(wTimer);if(e.target.checked)wTimer=setInterval(()=>{if(link.connected)act('Weather (auto)',sendWeather)},30*60*1000)};
+$('bMusic').onclick=()=>act('Music',()=>py(`import json\nwasp.system.set_music_info(json.loads(${pyStr(JSON.stringify({artist:$('mArtist').value,track:$('mTrack').value}))}))`));
+
+/* ---------- apps ---------- */
+let appInfo=null;
+async function loadApps(){
+  appInfo=JSON.parse(await py(`import appregistry,json\nq=wasp.system.quick_ring\nprint(json.dumps({'faces':list(appregistry.faces_list),'cur':type(q[0]).__name__,'apps':[[a.NAME,1] for a in wasp.system.launcher_ring]+[[type(a).__name__,0] for a in q[1:]]}))`));
+  const fl=$('faceList');fl.innerHTML='';
+  for(const [mod,cls] of appInfo.faces){
+    const b=document.createElement('button');b.textContent=cls.replace(/([a-z])([A-Z])/g,'$1 $2');
+    if(appInfo.cur===cls+'App')b.classList.add('pri');
+    b.onclick=()=>act('Face '+cls,async()=>{await py(`wasp.system.register('${mod}.${cls}App', watch_face=True)`);if($('faceBoot').checked)await persistMain(`wasp.system.register('${mod}.${cls}App', watch_face=True)`);await loadApps();toast('Face set')});
+    fl.appendChild(b);
+  }
+  const t=$('appTable');t.innerHTML='<tr><th>App</th><th></th></tr>'+appInfo.apps.map(a=>`<tr><td>${a[0].replace(/</g,'&lt;')}</td><td class="r note">${a[1]?'launcher':'quick ring'}</td></tr>`).join('');
+}
+$('bFaces').onclick=$('bApps').onclick=()=>act('Load apps',loadApps);
+/* Make a register line permanent by editing /flash/main.py */
+async function persistMain(line){
+  let src=await readFile('/flash/main.py').then(u=>new TextDecoder().decode(u)).catch(()=>'');
+  if(src.includes(line))return;
+  if(/^\s*(#include\(.*\)\s*)?$/.test(src))src="import wasp\nfrom gadgetbridge import *\nwasp.system.schedule()\n";
+  const i=src.indexOf('wasp.system.schedule()');
+  src=i>=0?src.slice(0,i)+line+'\n'+src.slice(i):src.replace(/\s*$/,'\n')+line+'\n';
+  await writeFile('/flash/main.py',new TextEncoder().encode(src));
+  log('main.py updated: '+line);
+}
+const SAMPLE=`# Minimal wasp-os app. Open it from the launcher.
+import wasp
+
+class HelloWebApp():
+    NAME = 'HelloWeb'
+
+    def foreground(self):
+        self._draw()
+        wasp.system.request_event(wasp.EventMask.TOUCH)
+
+    def touch(self, event):
+        self._draw()
+
+    def _draw(self):
+        draw = wasp.watch.drawable
+        draw.fill()
+        draw.string('Hello from', 0, 90, width=240)
+        draw.string('the web!', 0, 120, width=240)
+`;
+$('bSample').onclick=()=>{$('appSrc').value=SAMPLE;$('appName').value='helloweb';$('appClass').value='helloweb.HelloWebApp'};
+$('appFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;const t=await f.text();$('appSrc').value=t;const n=f.name.replace(/\.py$/,'').replace(/[^\w]/g,'_');$('appName').value=n;const m=/^class\s+(\w+)/m.exec(t);if(m)$('appClass').value=n+'.'+m[1]};
+$('bInstall').onclick=()=>act('Install',async()=>{
+  const name=$('appName').value.trim(),src=$('appSrc').value;
+  if(!/^[A-Za-z_]\w*$/.test(name))throw new Error('Module name must be a valid identifier');
+  if(!src.trim())throw new Error('No source');
+  if(!confirm(`Write /flash/${name}.py (${src.length} bytes) to the watch?`))return;
+  await writeFile('/flash/'+name+'.py',new TextEncoder().encode(src),'upProg');
+  const cls=$('appClass').value.trim();
+  if(cls){
+    const face=$('appFace').checked;const line=`wasp.system.register('${cls}'${face?', watch_face=True':''})`;
+    await py(line);
+    if($('appBoot').checked)await persistMain(line);
+  }
+  toast('Installed '+name);
+});
+
+/* ---------- files ---------- */
+function normPath(p){p=p.trim()||'/flash';if(!p.startsWith('/'))p='/'+p;return p.replace(/\/+/g,'/').replace(/(.)\/$/,'$1')}
+async function ls(){
+  const p=normPath($('fPath').value);$('fPath').value=p;
+  const r=JSON.parse(await py(`import os,json\nPATH=${pyStr(p)}\nr=[]\nfor n in os.listdir(PATH):\n s=os.stat(PATH+'/'+n)\n r.append([n,bool(s[0]&0x4000),s[6]])\nprint(json.dumps(r))`));
+  r.sort((a,b)=>(b[1]-a[1])||a[0].localeCompare(b[0]));
+  const t=$('fTable');t.innerHTML='<tr><th>Name</th><th class="r">Size</th><th></th></tr>';
+  for(const [n,dir,sz] of r){
+    const tr=document.createElement('tr');const full=(p==='/'?'':p)+'/'+n;
+    const a=document.createElement('td');
+    if(dir){const l=document.createElement('a');l.href='#';l.textContent='📁 '+n;l.onclick=e=>{e.preventDefault();$('fPath').value=full;act('List',ls)};a.appendChild(l)}else a.textContent=n;
+    const s=document.createElement('td');s.className='r';s.textContent=dir?'':sz.toLocaleString();
+    const b=document.createElement('td');b.className='r';
+    if(!dir){
+      const v=document.createElement('button');v.className='sm';v.textContent='View';v.onclick=()=>act('View',async()=>{const u=await readFile(full);$('viewer').hidden=false;$('vName').textContent=full;$('vText').textContent=/\.steps$|\.bin$/.test(n)?'(binary, '+u.length+' bytes)':new TextDecoder().decode(u)});
+      const d=document.createElement('button');d.className='sm';d.textContent='Save';d.onclick=()=>act('Download',async()=>{const u=await readFile(full,'fProg');const x=document.createElement('a');x.href=URL.createObjectURL(new Blob([u]));x.download=n;x.click()});
+      b.append(v,' ',d,' ');
+    }
+    const x=document.createElement('button');x.className='sm bad';x.textContent='Delete';x.onclick=()=>{if(confirm('Delete '+full+'?'))act('Delete',async()=>{await py(`import os\n${dir?'os.rmdir':'os.remove'}(${pyStr(full)})`);await ls()})};
+    b.appendChild(x);tr.append(a,s,b);t.appendChild(tr);
+  }
+  if(!r.length)t.innerHTML+='<tr><td colspan="3" class="note">Empty</td></tr>';
+}
+async function readFile(path,prog){
+  const sz=+(await py(`import os\nprint(os.stat(${pyStr(path)})[6])`));
+  const out=await py(`import ubinascii\nf=open(${pyStr(path)},'rb')\nwhile 1:\n d=f.read(96)\n if not d:break\n print(ubinascii.b2a_base64(d).decode(),end='')\nf.close()`,60000+sz*20);
+  const u=b64dec(out);if(u.length!==sz)throw new Error(`Size mismatch: got ${u.length}, expected ${sz}`);return u;
+}
+async function writeFile(path,u8,prog){
+  const d=path.lastIndexOf('/');if(d>0)await py(`import os\ntry:\n os.mkdir(${pyStr(path.slice(0,d))})\nexcept OSError:\n pass`);
+  await py(`import ubinascii\nf=open(${pyStr(path)},'wb')\nw=lambda d:f.write(ubinascii.a2b_base64(d))`);
+  const CH=96,PER=3;let ok=false;
+  try{
+    for(let i=0;i<u8.length;i+=CH*PER){
+      let c='';for(let j=i;j<Math.min(u8.length,i+CH*PER);j+=CH)c+="w('"+b64enc(u8.subarray(j,j+CH))+"');";
+      await py(c.slice(0,-1));
+      if(prog)setProg(prog,i/u8.length);
+    }ok=true;
+  }finally{await py("f.close()").catch(()=>{});if(prog)setProg(prog,null)}
+  const sz=+(await py(`import os\nprint(os.stat(${pyStr(path)})[6])`));
+  if(sz!==u8.length)throw new Error(`Write verify failed (${sz} of ${u8.length} bytes)`);
+}
+$('bLs').onclick=()=>act('List',ls);
+$('bUp').onclick=()=>{const p=normPath($('fPath').value).split('/');p.pop();$('fPath').value=p.join('/')||'/';act('List',ls)};
+$('bFUp').onclick=()=>act('Upload',async()=>{const f=$('fUpload').files[0];if(!f)throw new Error('Choose a file');const p=normPath($('fPath').value);if(!confirm(`Write ${p}/${f.name} (${f.size} bytes)?`))return;await writeFile(p+'/'+f.name,new Uint8Array(await f.arrayBuffer()),'fProg');await ls();toast('Uploaded')});
+$('bMkdir').onclick=()=>act('Mkdir',async()=>{const n=prompt('Folder name');if(!n)return;await py(`import os\nos.mkdir(${pyStr(normPath($('fPath').value)+'/'+n)})`);await ls()});
+
+/* ---------- console ---------- */
+const term=$('term');
+link.onraw=s=>{term.textContent+=s.replace(/\r\n/g,'\n').replace(/\r/g,'');if(term.textContent.length>20000)term.textContent=term.textContent.slice(-12000);term.scrollTop=term.scrollHeight};
+const hist=[];let hi=0;
+async function sendCmd(){const v=$('cmd').value;$('cmd').value='';if(v)hist.push(v);hi=hist.length;act('Console',()=>{need();return link.raw(v+'\r')})}
+$('bSend').onclick=sendCmd;
+$('cmd').onkeydown=e=>{if(e.key==='Enter')sendCmd();else if(e.key==='ArrowUp'&&hi>0){$('cmd').value=hist[--hi]||'';e.preventDefault()}else if(e.key==='ArrowDown'){$('cmd').value=hist[++hi]||'';e.preventDefault()}};
+$('bCtrlC').onclick=()=>act('Ctrl-C',()=>{need();return link.rawNoSync('\x03')});
+$('bClear').onclick=()=>{term.textContent=''};
+
+/* ---------- self test (?selftest) against the simulated watch ---------- */
+async function selfTest(){
+  const R=[];let pre=document.createElement('pre');pre.id='selftest';document.body.appendChild(pre);window.addEventListener('unhandledrejection',e=>ok('unhandled',false,e.reason&&e.reason.message));window.onerror=(m)=>ok('onerror',false,m);const ok=(n,c,x)=>{R.push((c?'PASS ':'FAIL ')+n+(c?'':' :: '+x));pre.textContent=R.join('\n')};
+  try{
+    demoBt=makeDemo();await link.connect(demoBt,true);ok('connect',link.connected);
+    ok('pyStr roundtrip',pyStr("a'b\\c\ndé")==="'a\\'b\\\\c\\nd\\xe9'",pyStr("a'b\\c\ndé"));
+    const o=JSON.parse(await link.run("print(watch.battery.level())"));ok('info',o.bat===77,JSON.stringify(o));
+    ok('error path',await link.run("f=open('nope.txt','rb')").then(()=>false,e=>/ENOENT/.test(e.message)));
+    ok('pre-sync',true);await syncSteps().catch(e=>ok('steps sync',false,e.message));
+    ok('steps cached',Object.keys(stepData).length>=15,Object.keys(stepData).length);
+    ok('steps decoded',tot(stepData[Object.keys(stepData).sort()[0]])>1000,'total');
+    const payload=new Uint8Array(1000);for(let i=0;i<payload.length;i++)payload[i]=(i*31+7)&255;
+    await writeFile('/flash/test.bin',payload);
+    const back=await readFile('/flash/test.bin');
+    ok('upload+download roundtrip',back.length===1000&&back.every((v,i)=>v===payload[i]),back.length);
+    await ls().catch(e=>ok('ls',false,e.message));
+    ok('ls shows file',$('fTable').textContent.includes('test.bin'),$('fTable').textContent.slice(0,100));
+    await py(`import json\nwasp.system.set_weather_info(json.loads(${pyStr(JSON.stringify({temp:290.5,txt:'Test'}))}))`);ok('weather cmd',true);
+    await link.run('print(1)').then(()=>ok('run after error',true),e=>ok('run after error',false,e.message));
+    await link.lock(()=>link.resume());ok('resume',!link.synced);
+    drawSteps();
+  }catch(e){ok('exception',false,e.stack||e.message)}
+  pre.textContent=R.join('\n')+'\nDONE';
+}
+if(location.search.includes('selftest'))window.addEventListener('load',()=>{showTab('steps');selfTest()});
+</script>
+</body>
+</html>
