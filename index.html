@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wasp Companion</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#e8590c">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <meta name="description" content="Browser companion for wasp-os watches (Colmi P8, PineTime): time sync, steps, notifications, apps, files, console. Uses Web Bluetooth.">
 <style>
 :root{
@@ -264,16 +268,30 @@ const b64dec=s=>{const b=atob(s.replace(/\s+/g,''));const u=new Uint8Array(b.len
 /* ---------- BLE link + REPL layer ---------- */
 class Link{
   constructor(){this.dev=null;this.rx=null;this.tx=null;this.buf='';this.waiters=[];this.synced=false;this.chain=Promise.resolve();this.resumeTimer=null;this.hold=false;this.onraw=null;this.ondisc=null;this.dec=new TextDecoder();this.connected=false}
-  async connect(bt,all=true){
+  async connect(bt,all=true,step=()=>{}){
     const opts=all?{acceptAllDevices:true,optionalServices:[NUS]}:{filters:[{services:[NUS]}]};
+    step('Choose a device…');
     this.dev=await bt.requestDevice(opts);
     this.dev.addEventListener('gattserverdisconnected',()=>{this.connected=false;this.synced=false;this.ondisc&&this.ondisc()});
-    const srv=await this.dev.gatt.connect();
-    const svc=await srv.getPrimaryService(NUS);
+    const tmo=(p,ms,what)=>Promise.race([p,new Promise((_,r)=>setTimeout(()=>r(new Error('Timed out '+what)),ms))]);
+    let srv,err;
+    for(let i=1;i<=3&&!srv;i++){
+      step('Connecting to '+(this.dev.name||'device')+(i>1?' (try '+i+')':'')+'…');
+      try{srv=await tmo(this.dev.gatt.connect(),10000,'connecting (is the watch awake and not connected to another app?)')}
+      catch(e){err=e;try{this.dev.gatt.disconnect()}catch(_){}await sleep(800)}
+    }
+    if(!srv)throw err;
+    step('Finding UART service…');
+    let svc;
+    try{svc=await tmo(srv.getPrimaryService(NUS),10000,'finding the UART service')}
+    catch(e){
+      if(e.name==='NotFoundError')throw new Error('No Nordic UART service on this device. It must be running wasp-os (not the stock firmware). If it is, forget/unpair it in Android Bluetooth settings and retry.');
+      throw e}
     this.rx=await svc.getCharacteristic(RXC);
     this.tx=await svc.getCharacteristic(TXC);
     this.tx.addEventListener('characteristicvaluechanged',e=>this._data(e.target.value));
-    await this.tx.startNotifications();
+    step('Starting notifications…');
+    await tmo(this.tx.startNotifications(),10000,'starting notifications');
     this.connected=true;this.synced=false;this.buf='';
     return this.dev.name||'(unnamed)';
   }
@@ -458,8 +476,13 @@ function onConnected(){
 }
 link.ondisc=()=>{$('st').className='pill';$('st').textContent='Disconnected';$('bConnect').hidden=false;$('bDemo').hidden=false;$('bDisc').hidden=true;$('bat').hidden=true;log('Disconnected')};
 async function doConnect(bt){
-  try{await link.connect(bt,true);onConnected()}
-  catch(e){if(e.name!=='NotFoundError')toast('Connect failed: '+e.message);log('connect ✗ '+e.message)}
+  const st=$('st');
+  try{await link.connect(bt,true,m=>{st.className='pill busy';st.textContent=m;log(m)});onConnected()}
+  catch(e){
+    st.className='pill';st.textContent='Not connected';
+    const cancelled=e.name==='NotFoundError'&&/cancel/i.test(e.message);
+    if(!cancelled)toast('Connect failed: '+e.message);
+    log('connect ✗ '+e.name+': '+e.message)}
 }
 $('bConnect').onclick=()=>doConnect(navigator.bluetooth);
 $('bDemo').onclick=()=>{demoBt=demoBt||makeDemo();doConnect(demoBt)};
@@ -764,6 +787,7 @@ async function selfTest(){
   }catch(e){ok('exception',false,e.stack||e.message)}
   pre.textContent=R.join('\n')+'\nDONE';
 }
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
 if(location.search.includes('selftest'))window.addEventListener('load',()=>{showTab('steps');selfTest()});
 </script>
 </body>
