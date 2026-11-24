@@ -240,7 +240,9 @@ a{color:var(--acc)}
 
 <script>
 "use strict";
-const NUS='6e400001-b5a0-f393-e0a9-e50e24dcca9e', RXC='6e400002-b5a0-f393-e0a9-e50e24dcca9e', TXC='6e400003-b5a0-f393-e0a9-e50e24dcca9e';
+/* wasp-os uses b5a3 in the UUIDs; stock Nordic UART uses b5a0. Try wasp-os first. */
+const UUIDS=[['6e400001-b5a3-f393-e0a9-e50e24dcca9e','6e400002-b5a3-f393-e0a9-e50e24dcca9e','6e400003-b5a3-f393-e0a9-e50e24dcca9e'],['6e400001-b5a0-f393-e0a9-e50e24dcca9e','6e400002-b5a0-f393-e0a9-e50e24dcca9e','6e400003-b5a0-f393-e0a9-e50e24dcca9e']];
+let [NUS,RXC,TXC]=UUIDS[0];
 const $=id=>document.getElementById(id);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const pad=(n,w=2)=>String(n).padStart(w,'0');
@@ -269,7 +271,7 @@ const b64dec=s=>{const b=atob(s.replace(/\s+/g,''));const u=new Uint8Array(b.len
 class Link{
   constructor(){this.dev=null;this.rx=null;this.tx=null;this.buf='';this.waiters=[];this.synced=false;this.chain=Promise.resolve();this.resumeTimer=null;this.hold=false;this.onraw=null;this.ondisc=null;this.dec=new TextDecoder();this.connected=false}
   async connect(bt,all=true,step=()=>{}){
-    const opts=all?{acceptAllDevices:true,optionalServices:[NUS]}:{filters:[{services:[NUS]}]};
+    const opts=all?{acceptAllDevices:true,optionalServices:UUIDS.map(u=>u[0])}:{filters:UUIDS.map(u=>({services:[u[0]]}))};
     step('Choose a device…');
     this.dev=await bt.requestDevice(opts);
     this.dev.addEventListener('gattserverdisconnected',()=>{this.connected=false;this.synced=false;this.ondisc&&this.ondisc()});
@@ -283,8 +285,13 @@ class Link{
     if(!srv)throw err;
     step('Finding UART service…');
     let svc;
-    try{svc=await tmo(srv.getPrimaryService(NUS),10000,'finding the UART service')}
-    catch(e){
+    try{
+      for(const u of UUIDS){
+        try{svc=await tmo(srv.getPrimaryService(u[0]),10000,'finding the UART service');[NUS,RXC,TXC]=u;break}
+        catch(e){if(e.name!=='NotFoundError')throw e}
+      }
+      if(!svc){const e=new Error('nf');e.name='NotFoundError';throw e}
+    }catch(e){
       if(e.name==='NotFoundError')throw new Error('No Nordic UART service on this device. It must be running wasp-os (not the stock firmware). If it is, forget/unpair it in Android Bluetooth settings and retry.');
       throw e}
     this.rx=await svc.getCharacteristic(RXC);
