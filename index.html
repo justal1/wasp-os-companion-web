@@ -656,26 +656,66 @@ $('bMusic').onclick=()=>act('Music',()=>py(`import json\nwasp.system.set_music_i
 /* ---------- apps ---------- */
 let appInfo=null;
 async function loadApps(){
-  appInfo=JSON.parse(await py(`import appregistry,json\nq=wasp.system.quick_ring\nprint(json.dumps({'faces':list(appregistry.faces_list),'cur':type(q[0]).__name__,'apps':[[a.NAME,1] for a in wasp.system.launcher_ring]+[[type(a).__name__,0] for a in q[1:]]}))`));
+  /* appregistry only exists on newer builds; degrade gracefully without it */
+  appInfo=JSON.parse(await py(`import json
+try:
+ import appregistry
+ f=[list(x) for x in appregistry.faces_list]
+except Exception:
+ f=[]
+q=wasp.system.quick_ring
+print(json.dumps({'faces':f,'cur':type(q[0]).__name__,'apps':[[a.NAME,1] for a in wasp.system.launcher_ring]+[[type(a).__name__,0] for a in q[1:]]}))`));
   const fl=$('faceList');fl.innerHTML='';
+  if(!appInfo.faces.length){fl.innerHTML='<span class="note">This firmware has no face list (no <code>appregistry</code>). Use Install below with a watch-face class and tick “watch face”.</span>'}
   for(const [mod,cls] of appInfo.faces){
     const b=document.createElement('button');b.textContent=cls.replace(/([a-z])([A-Z])/g,'$1 $2');
     if(appInfo.cur===cls+'App')b.classList.add('pri');
-    b.onclick=()=>act('Face '+cls,async()=>{await py(`wasp.system.register('${mod}.${cls}App', watch_face=True)`);if($('faceBoot').checked)await persistMain(`wasp.system.register('${mod}.${cls}App', watch_face=True)`);await loadApps();toast('Face set')});
+    b.onclick=()=>act('Face '+cls,async()=>{
+      const path=`${mod}.${cls}App`;
+      await py(regCode(path,true));
+      if($('faceBoot').checked)await persistMain(path,true);
+      await loadApps();toast('Face set'+($('faceBoot').checked?' (and saved for boot)':' until reboot'))});
     fl.appendChild(b);
   }
   const t=$('appTable');t.innerHTML='<tr><th>App</th><th></th></tr>'+appInfo.apps.map(a=>`<tr><td>${a[0].replace(/</g,'&lt;')}</td><td class="r note">${a[1]?'launcher':'quick ring'}</td></tr>`).join('');
 }
+/* Python that registers an app now: replaces any copy already registered, and is explicit
+   about the ring (the default differs between wasp-os versions). */
+function regCode(path,face){
+  const cls=path.slice(path.lastIndexOf('.')+1);
+  return `s=wasp.system
+for a in list(s.launcher_ring):
+ if type(a).__name__==${pyStr(cls)}:
+  s.launcher_ring.remove(a)
+s.register(${pyStr(path)},quick_ring=False,watch_face=${face?'True':'False'})`+(face?`
+s.switch(s.quick_ring[0])`:'');
+}
 $('bFaces').onclick=$('bApps').onclick=()=>act('Load apps',loadApps);
-/* Make a register line permanent by editing /flash/main.py */
-async function persistMain(line){
+/* Make a registration permanent by editing /flash/main.py.
+   Faces go AFTER wasp.system.schedule(): before it the quick ring is empty, so
+   register(watch_face=True) raises IndexError at boot and the watch never starts.
+   Apps go before it. Both are wrapped in try/except so a bad entry can't break boot. */
+const MARK='# wasp-companion:',MEND='# wasp-companion:end';
+async function persistMain(path,face){
   let src=await readFile('/flash/main.py').then(u=>new TextDecoder().decode(u)).catch(()=>'');
-  if(src.includes(line))return;
   if(/^\s*(#include\(.*\)\s*)?$/.test(src))src="import wasp\nfrom gadgetbridge import *\nwasp.system.schedule()\n";
+  const key=face?'face':'app:'+path;
+  /* remove our earlier block for the same key, and old bare face lines that break boot */
+  const out=[];let skip=false;
+  for(const l of src.split('\n')){
+    if(l===MARK+key){skip=true;continue}
+    if(skip){if(l===MEND)skip=false;continue}
+    if(/^wasp\.system\.register\(.*watch_face=True/.test(l))continue;
+    out.push(l);
+  }
+  src=out.join('\n');
+  const block=MARK+key+'\ntry:\n    '+regCode(path,face).split('\n').join('\n    ')+'\nexcept Exception as e:\n    print(e)\n'+MEND+'\n';
   const i=src.indexOf('wasp.system.schedule()');
-  src=i>=0?src.slice(0,i)+line+'\n'+src.slice(i):src.replace(/\s*$/,'\n')+line+'\n';
+  if(i<0)src=src.replace(/\s*$/,'\n')+block;
+  else if(face){const j=src.indexOf('\n',i);src=j<0?src+'\n'+block:src.slice(0,j+1)+block+src.slice(j+1)}
+  else src=src.slice(0,i)+block+src.slice(i);
   await writeFile('/flash/main.py',new TextEncoder().encode(src));
-  log('main.py updated: '+line);
+  log('main.py updated for '+path);
 }
 const SAMPLE=`# Minimal wasp-os app. Open it from the launcher.
 import wasp
@@ -706,9 +746,9 @@ $('bInstall').onclick=()=>act('Install',async()=>{
   await writeFile('/flash/'+name+'.py',new TextEncoder().encode(src),'upProg');
   const cls=$('appClass').value.trim();
   if(cls){
-    const face=$('appFace').checked;const line=`wasp.system.register('${cls}'${face?', watch_face=True':''})`;
-    await py(line);
-    if($('appBoot').checked)await persistMain(line);
+    const face=$('appFace').checked;
+    await py(regCode(cls,face));
+    if($('appBoot').checked)await persistMain(cls,face);
   }
   toast('Installed '+name);
 });
@@ -790,6 +830,13 @@ async function selfTest(){
     await py(`import json\nwasp.system.set_weather_info(json.loads(${pyStr(JSON.stringify({temp:290.5,txt:'Test'}))}))`);ok('weather cmd',true);
     await link.run('print(1)').then(()=>ok('run after error',true),e=>ok('run after error',false,e.message));
     await link.lock(()=>link.resume());ok('resume',!link.synced);
+    await persistMain('apps.user.clock.ClockApp',true);await persistMain('apps.user.clock.ClockApp',true);
+    await persistMain('helloweb.HelloWebApp',false);await persistMain('helloweb.HelloWebApp',false);
+    const mp=new TextDecoder().decode(await readFile('/flash/main.py'));
+    ok('main.py: one face block, one app block',(mp.match(/wasp-companion:face/g)||[]).length===1&&(mp.match(/wasp-companion:app:/g)||[]).length===1);
+    ok('main.py: face after schedule, app before',mp.indexOf('wasp-companion:face')>mp.indexOf('wasp.system.schedule()')&&mp.indexOf('wasp-companion:app:')<mp.indexOf('wasp.system.schedule()'));
+    R.push('MAINPY<<'+mp+'>>MAINPY');
+    await loadApps();ok('loadApps',$('faceList').children.length>0);
     drawSteps();
   }catch(e){ok('exception',false,e.stack||e.message)}
   pre.textContent=R.join('\n')+'\nDONE';
