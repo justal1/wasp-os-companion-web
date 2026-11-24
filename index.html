@@ -362,7 +362,7 @@ class Link{
   /* Run Python source on the watch and return everything it printed. */
   async _runInner(code,timeout=20000){
     this.buf='';
-    await this.write("print('@@'+'B');exec("+pyStr(code)+");print('@@'+'E')\r");
+    await this.write("import gc;gc.collect();print('@@'+'B');exec("+pyStr(code)+");print('@@'+'E')\r");
     const r=await this.waitFor(b=>{
       const m=/@@B\r?\n([\s\S]*?)@@E\r?\n>>> $/.exec(b);if(m)return{ok:true,out:m[1]};
       const e=/@@B\r?\n([\s\S]*?Traceback[\s\S]*?)>>> $/.exec(b);if(e)return{ok:false,out:e[1]};
@@ -373,7 +373,18 @@ class Link{
   run(code,timeout=20000){
     return this.lock(async()=>{
       await this.sync();
-      try{return await this._runInner(code,timeout)}finally{this._arm()}
+      try{
+        try{return await this._runInner(code,timeout)}
+        catch(e){
+          if(!/MemoryError|allocat/i.test(e.message))throw e;
+          /* heap too fragmented: collect and try once more, then report how much is really free */
+          try{return await this._runInner('import gc\ngc.collect()\n'+code,timeout)}
+          catch(e2){
+            if(!/MemoryError|allocat/i.test(e2.message))throw e2;
+            let free='?';try{free=await this._runInner('import gc\ngc.collect()\nprint(gc.mem_free())',8000)}catch(_){}
+            throw new Error('Watch is out of RAM ('+free+' bytes free after cleanup). Reboot the watch, reconnect, and do this first: '+e2.message.split('\n').pop())}
+        }
+      }finally{this._arm()}
     });
   }
   /* Send raw text (console). */
@@ -430,7 +441,7 @@ function makeDemo(){
   const emit=s=>{const b=enc.encode(s);let i=0;const go=()=>{if(i>=b.length)return;const part=b.slice(i,i+20);i+=20;const dv=new DataView(part.buffer);for(const f of listeners)f({target:{value:dv}});setTimeout(go,2)};setTimeout(go,3)};
   const unpy=lit=>{let o='',s=lit.slice(1,-1);for(let i=0;i<s.length;i++){const c=s[i];if(c!=='\\'){o+=c;continue}const n=s[++i];if(n==='n')o+='\n';else if(n==='r')o+='\r';else if(n==='t')o+='\t';else if(n==='x'){o+=String.fromCharCode(parseInt(s.substr(i+1,2),16));i+=2}else o+=n}return o};
   const handleLine=line=>{
-    let m=/^print\('@@'\+'B'\);exec\(('(?:[^'\\]|\\.)*')\);print\('@@'\+'E'\)$/.exec(line);
+    let m=/^(?:import gc;gc\.collect\(\);)?print\('@@'\+'B'\);exec\(('(?:[^'\\]|\\.)*')\);print\('@@'\+'E'\)$/.exec(line);
     if(m){let out;try{out=dev(unpy(m[1]))}catch(e){emit('@@B\r\nTraceback (most recent call last):\r\n  File "<stdin>", line 1, in <module>\r\n'+e.message+'\r\n>>> ');return}
       emit('@@B\r\n'+(out?out.replace(/\n/g,'\r\n')+'\r\n':'')+'@@E\r\n>>> ');return}
     if(/^print\('@@'\+'S'\)$/.test(line)){emit('@@S\r\n>>> ');return}
@@ -687,6 +698,8 @@ function regCode(path,face){
 for a in list(s.launcher_ring):
  if type(a).__name__==${pyStr(cls)}:
   s.launcher_ring.remove(a)
+import gc
+gc.collect()
 s.register(${pyStr(path)},quick_ring=False,watch_face=${face?'True':'False'})`+(face?`
 s.switch(s.quick_ring[0])`:'');
 }
