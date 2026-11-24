@@ -702,15 +702,19 @@ for f in appregistry.faces_list:
 /* Python that registers an app now: replaces any copy already registered, and is explicit
    about the ring (the default differs between wasp-os versions). */
 function regCode(path,face){
+  /* Keep this tiny: the P8 has ~8KB free and the compiler needs RAM too (no list(), no extra imports;
+     the command wrapper already runs gc.collect()). A face just replaces quick_ring[0]. */
   const cls=path.slice(path.lastIndexOf('.')+1);
-  return `s=wasp.system
-for a in list(s.launcher_ring):
+  return face
+    ?`s=wasp.system
+s.register(${pyStr(path)},quick_ring=False,watch_face=True)
+s.switch(s.quick_ring[0])`
+    :`s=wasp.system
+for a in s.launcher_ring:
  if type(a).__name__==${pyStr(cls)}:
   s.launcher_ring.remove(a)
-import gc
-gc.collect()
-s.register(${pyStr(path)},quick_ring=False,watch_face=${face?'True':'False'})`+(face?`
-s.switch(s.quick_ring[0])`:'');
+  break
+s.register(${pyStr(path)},quick_ring=False)`;
 }
 $('bFaces').onclick=$('bApps').onclick=()=>act('Load apps',loadApps);
 /* Make a registration permanent by editing /flash/main.py.
